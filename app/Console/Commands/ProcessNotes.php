@@ -91,6 +91,9 @@ class ProcessNotes extends Command
                 $folder->increment('processed_files');
             }
             $progressBar->advance();
+            
+            // Small delay to reduce database contention
+            usleep(100000); // 0.1 second
         }
         
         $progressBar->finish();
@@ -179,6 +182,9 @@ class ProcessNotes extends Command
                 $note->folder->increment('processed_files');
             }
             $progressBar->advance();
+            
+            // Small delay to reduce database contention
+            usleep(100000); // 0.1 second
         }
         
         $progressBar->finish();
@@ -189,69 +195,93 @@ class ProcessNotes extends Command
     }
     
     /**
-     * Process a single note
+     * Process a single note with retry logic
      */
     protected function processNote(Note $note, ?Folder $folder = null): bool
     {
-        DB::beginTransaction();
-        try {
-            // Analyze and categorize
-            $categoryData = $this->llmService->analyzeAndCategorize($note->original_content);
-            
-            // Create or find category
-            $category = $this->llmService->findOrCreateCategory(
-                $categoryData['category'],
-                $categoryData['category_description'] ?? null
-            );
-            
-            // Create or find subcategory if provided
-            $subcategory = null;
-            if (!empty($categoryData['subcategory'])) {
-                $subcategory = $this->llmService->findOrCreateSubcategory(
-                    $category->id,
-                    $categoryData['subcategory'],
-                    $categoryData['subcategory_description'] ?? null
+        $maxRetries = 3;
+        $retryDelay = 1; // seconds
+        
+        for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
+            try {
+                DB::beginTransaction();
+                
+                // Analyze and categorize
+                $categoryData = $this->llmService->analyzeAndCategorize($note->original_content);
+                
+                // Create or find category
+                $category = $this->llmService->findOrCreateCategory(
+                    $categoryData['category'],
+                    $categoryData['category_description'] ?? null
                 );
+                
+                // Create or find subcategory if provided
+                $subcategory = null;
+                if (!empty($categoryData['subcategory'])) {
+                    $subcategory = $this->llmService->findOrCreateSubcategory(
+                        $category->id,
+                        $categoryData['subcategory'],
+                        $categoryData['subcategory_description'] ?? null
+                    );
+                }
+                
+                // Summarize note
+                $summary = $this->llmService->summarizeNote($note->original_content);
+                
+                // Create processed note
+                ProcessedNote::updateOrCreate(
+                    ['note_id' => $note->id],
+                    [
+                        'category_id' => $category->id,
+                        'subcategory_id' => $subcategory?->id,
+                        'title' => $summary['title'],
+                        'summary' => $summary['summary'],
+                        'key_points' => $summary['key_points'],
+                        'metadata' => [
+                            'original_file' => $note->file_name,
+                            'format' => $note->format,
+                            'folder' => $folder?->name,
+                            'processed_at' => now(),
+                        ],
+                    ]
+                );
+                
+                // Mark note as processed
+                $note->update(['is_processed' => true]);
+                
+                // Update category counts
+                $category->increment('note_count');
+                if ($subcategory) {
+                    $subcategory->increment('note_count');
+                }
+                
+                DB::commit();
+                return true;
+                
+            } catch (\Illuminate\Database\QueryException $e) {
+                DB::rollBack();
+                
+                // Check if it's a database locked error
+                if (str_contains($e->getMessage(), 'database is locked')) {
+                    if ($attempt < $maxRetries) {
+                        $this->warn("Database locked, retrying in {$retryDelay} seconds... (Attempt {$attempt}/{$maxRetries})");
+                        sleep($retryDelay);
+                        $retryDelay *= 2; // Exponential backoff
+                        continue;
+                    }
+                }
+                
+                $this->error("\nError processing {$note->file_name}: " . $e->getMessage());
+                return false;
+                
+            } catch (\Exception $e) {
+                DB::rollBack();
+                $this->error("\nError processing {$note->file_name}: " . $e->getMessage());
+                return false;
             }
-            
-            // Summarize note
-            $summary = $this->llmService->summarizeNote($note->original_content);
-            
-            // Create processed note
-            ProcessedNote::updateOrCreate(
-                ['note_id' => $note->id],
-                [
-                    'category_id' => $category->id,
-                    'subcategory_id' => $subcategory?->id,
-                    'title' => $summary['title'],
-                    'summary' => $summary['summary'],
-                    'key_points' => $summary['key_points'],
-                    'metadata' => [
-                        'original_file' => $note->file_name,
-                        'format' => $note->format,
-                        'folder' => $folder?->name,
-                        'processed_at' => now(),
-                    ],
-                ]
-            );
-            
-            // Mark note as processed
-            $note->update(['is_processed' => true]);
-            
-            // Update category counts
-            $category->increment('note_count');
-            if ($subcategory) {
-                $subcategory->increment('note_count');
-            }
-            
-            DB::commit();
-            return true;
-            
-        } catch (\Exception $e) {
-            DB::rollBack();
-            $this->error("\nError processing {$note->file_name}: " . $e->getMessage());
-            return false;
         }
+        
+        return false;
     }
     
     /**
