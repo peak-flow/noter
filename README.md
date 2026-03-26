@@ -1,61 +1,101 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Noter
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+AI-powered note management and categorization system. Import folders of documents, process them with OpenAI for automatic categorization and summarization, and browse the results through a clean web interface.
 
-## About Laravel
+## How It Works
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+1. **Import** a folder of documents (TXT, PDF, Markdown, RTF) via the web UI
+2. **Process** imported notes with an Artisan command — each note is sent to OpenAI for categorization and summarization
+3. **Browse** organized notes by AI-generated categories, view summaries, and search across your collection
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Tech Stack
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- **Backend:** Laravel 12 (PHP 8.2)
+- **Database:** SQLite (WAL mode for concurrency)
+- **AI:** OpenAI API (gpt-3.5-turbo) via [openai-php/laravel](https://github.com/openai-php/laravel)
+- **PDF Extraction:** [spatie/pdf-to-text](https://github.com/spatie/pdf-to-text)
+- **Frontend:** Blade templates, Tailwind CSS, Alpine.js
 
-## Learning Laravel
+## Setup
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+```bash
+# Clone and install
+git clone https://github.com/peak-flow/noter.git
+cd noter
+composer install
+npm install
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+# Configure environment
+cp .env.example .env
+php artisan key:generate
+```
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+Add your OpenAI API key to `.env`:
 
-## Laravel Sponsors
+```
+OPENAI_API_KEY=your-key-here
+```
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+Run migrations and start the dev server:
 
-### Premium Partners
+```bash
+php artisan migrate
+composer dev
+```
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+This starts the web server, queue worker, log viewer, and Vite dev server concurrently.
 
-## Contributing
+## Usage
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+### Web Interface
 
-## Code of Conduct
+- **Dashboard** (`/`) — Browse categories with note counts
+- **Folders** (`/folders`) — Manage imported document folders
+- **Import** (`/folders/create`) — Import a new folder by providing its path
+- **Search** (`/search`) — Search across processed note titles and summaries
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+### Processing Notes
 
-## Security Vulnerabilities
+After importing a folder, process the notes via CLI:
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+```bash
+# Process all unprocessed notes (default limit: 10)
+php artisan notes:process
+
+# Process a specific folder
+php artisan notes:process --folder=1
+
+# Process with custom limit
+php artisan notes:process --limit=50
+
+# Process from a directory path directly
+php artisan notes:process --path=/path/to/notes
+```
+
+Each note goes through two AI passes:
+1. **Categorization** — assigns a category and optional subcategory
+2. **Summarization** — generates a title, summary, and key points
+
+## Architecture
+
+```
+app/
+  Console/Commands/     ProcessNotes — CLI command for AI processing
+  Http/Controllers/     NotesController, FoldersController
+  Models/               User, Category, Subcategory, Note, ProcessedNote, Folder
+  Services/
+    FileReaderService   — Multi-format file reading (TXT, MD, PDF, RTF)
+    LLMService          — OpenAI API integration (categorize + summarize)
+    FolderImportService — Folder import orchestration
+```
+
+## Supported File Formats
+
+- Plain text (`.txt`, `.text`)
+- Markdown (`.md`, `.markdown`)
+- PDF (`.pdf`) — requires `pdftotext` binary (poppler-utils)
+- Rich Text (`.rtf`)
 
 ## License
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+MIT
